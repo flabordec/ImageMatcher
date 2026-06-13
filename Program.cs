@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.CommandLine;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -113,27 +114,21 @@ class Program
         return new ImageGroup(imgA.FilePath, similarGroup);
     }
 
-    static async Task Main(string[] args)
+    private static async Task RunImageSearch(
+        string targetDirectory,
+        bool recursive,
+        int minGoodMatchesThreshold,
+        float maxFeatureDistance)
     {
-        // --- CONFIGURATION ---
-        string targetDirectory = @"S:\pictures\sorted\Zenless Zone Zero";
-
-        // How many matching keypoints are required to consider images "similar".
-        // Increase this to reduce false positives; decrease to catch heavily cropped images.
-        int minGoodMatchesThreshold = 120;
-
-        // Maximum distance (error) allowed between two features to consider them a match
-        float maxFeatureDistance = 25f;
-        // ---------------------
+        SearchOption searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 
         if (!Directory.Exists(targetDirectory))
         {
-            Console.WriteLine("Directory does not exist.");
-            return;
+            throw new ArgumentException("Directory does not exist.");
         }
 
         var extensions = new[] { ".jpg", ".jpeg", ".png", ".bmp", ".webp" };
-        var files = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories)
+        var files = Directory.GetFiles(targetDirectory, "*.*", searchOption)
                              .Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
                              .ToList();
 
@@ -221,4 +216,56 @@ class Program
 
         Console.WriteLine("\nProcessing complete.");
     }
+
+    static async Task<int> Main(string[] args)
+    {
+        var directoryArgument = new Argument<string>("directory")
+        {
+            Description = "The directory to search.",
+        };
+
+        var recursiveOption = new Option<bool>("--recursive")
+        {
+            Description = "Whether the search is recursive or not.",
+            DefaultValueFactory = r => false,
+            Aliases = { "-r" }
+        };
+
+        var minKeypointMatchesOption = new Option<int>("--min-keypoint-matches")
+        {
+            Description = "The minimum number of keypoint matches to consider two images similar.",
+            DefaultValueFactory = r => 120
+        };
+
+        var maxFeatureDistanceOption = new Option<float>("--max-feature-distance")
+        {
+            Description = "Maximum distance (error) to consider two features a match.",
+            DefaultValueFactory = r => 25f
+        };
+
+        // 3. Assemble the Root Command
+        var rootCommand = new RootCommand("Image similarity search and keypoint matching tool.");
+        rootCommand.Arguments.Add(directoryArgument);
+        rootCommand.Options.Add(recursiveOption);
+        rootCommand.Options.Add(minKeypointMatchesOption);
+        rootCommand.Options.Add(maxFeatureDistanceOption);
+        rootCommand.SetAction(
+            pr => RunImageSearch(
+                pr.GetRequiredValue(directoryArgument),
+                pr.GetValue(recursiveOption),
+                pr.GetValue(minKeypointMatchesOption),
+                pr.GetValue(maxFeatureDistanceOption)));
+
+        try
+        {
+            return await rootCommand.Parse(args).InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            return 1;
+        }
+    }
 }
+
+
