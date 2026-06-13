@@ -16,6 +16,10 @@ record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
     }
 }
 
+record SimilarityResult(string ImagePath, int GoodMatchesFlann, int GoodMatchesBf);
+
+record ImageGroup(string MainImagePath, List<SimilarityResult> SimilarityResults);
+
 
 class Program
 {
@@ -56,12 +60,11 @@ class Program
         }
     }
 
-    private static bool ImagesMatch(
+    private static int ImagesMatch(
         DescriptorMatcher matcher,
         ImageFeature imgA,
         ImageFeature imgB,
-        float maxFeatureDistance,
-        int minGoodMatchesThreshold)
+        float maxFeatureDistance)
     {
         // Match descriptors
         var matches = matcher.Match(imgA.Descriptors, imgB.Descriptors);
@@ -70,13 +73,50 @@ class Program
         int goodMatchesCount = matches.Count(m => m.Distance < maxFeatureDistance);
 
         // If enough features match, they are similar (robust against cropping/resizing)
-        return goodMatchesCount >= minGoodMatchesThreshold;
+        return goodMatchesCount;
     }
 
-    static void Main(string[] args)
+    private static ImageGroup FindSimilarImages(
+        FlannBasedMatcher flannMatcher,
+        BFMatcher bfMatcher,
+        List<ImageFeature> featuresList,
+        int i,
+        float maxFeatureDistance,
+        int minGoodMatchesThreshold,
+        ref int processedCount)
+    {
+        var imgA = featuresList[i];
+        var similarGroup = new List<SimilarityResult>();
+
+        for (int j = i + 1; j < featuresList.Count; j++)
+        {
+            var imgB = featuresList[j];
+
+            // We verify the descriptors are not empty when adding to the list
+            Debug.Assert(!imgA.Descriptors.Empty());
+            Debug.Assert(!imgB.Descriptors.Empty());
+
+            int goodMatchesFlann = ImagesMatch(flannMatcher, imgA, imgB, maxFeatureDistance);
+            if (goodMatchesFlann >= minGoodMatchesThreshold)
+            {
+                int goodMatchesBf = ImagesMatch(bfMatcher, imgA, imgB, maxFeatureDistance);
+                if (goodMatchesBf >= minGoodMatchesThreshold)
+                {
+                    similarGroup.Add(new SimilarityResult(imgB.FilePath, goodMatchesFlann, goodMatchesBf));
+                }
+            }
+        }
+
+        Interlocked.Increment(ref processedCount);
+        Console.WriteLine($"\rProcessing image {processedCount + 1}/{featuresList.Count} ({(processedCount + 1) * 100 / featuresList.Count}%)");
+
+        return new ImageGroup(imgA.FilePath, similarGroup);
+    }
+
+    static async Task Main(string[] args)
     {
         // --- CONFIGURATION ---
-        string targetDirectory = @"S:\pictures\sorted\Edens Zero";
+        string targetDirectory = @"S:\pictures\sorted\Zenless Zone Zero";
 
         // How many matching keypoints are required to consider images "similar".
         // Increase this to reduce false positives; decrease to catch heavily cropped images.
@@ -113,8 +153,6 @@ class Program
             ).ToList();
 
         Console.WriteLine("\nComparing images for similarities...");
-        var processedFiles = new HashSet<string>();
-
         // Brute Force Matcher using Hamming distance (best for ORB binary descriptors)
         using var bfMatcher = new BFMatcher(NormTypes.Hamming, crossCheck: true);
 
@@ -128,55 +166,50 @@ class Program
         using var searchParams = new SearchParams(50);
         using var flannMatcher = new FlannBasedMatcher(indexParams, searchParams);
 
-        var similarGroups = new List<List<string>>();
+        var tasks = new List<Task<ImageGroup>>();
+        int processedCount = 0;
         // 2. Compare features (O(N^2) comparison)
         for (int i = 0; i < featuresList.Count; i++)
         {
-            Console.WriteLine($"\rProcessing image {i + 1}/{featuresList.Count} ({(i + 1) * 100 / featuresList.Count}%)");
+            int index = i;
+            tasks.Add(
+                Task.Run(() =>
+                    FindSimilarImages(
+                        flannMatcher,
+                        bfMatcher,
+                        featuresList,
+                        index,
+                        maxFeatureDistance,
+                        minGoodMatchesThreshold,
+                        ref processedCount)));
+        }
 
-            var imgA = featuresList[i];
-            if (processedFiles.Contains(imgA.FilePath))
+        var similarGroupsComplete = await Task.WhenAll(tasks);
+        var similarGroupsFiltered = new List<ImageGroup>();
+        HashSet<string> processedFiles = new HashSet<string>();
+        foreach (var group in similarGroupsComplete)
+        {
+            if (processedFiles.Contains(group.MainImagePath))
             {
                 continue;
             }
-
-            var similarGroup = new List<string>();
-
-            for (int j = i + 1; j < featuresList.Count; j++)
+            if (group.SimilarityResults.Count > 0)
             {
-                var imgB = featuresList[j];
-                if (processedFiles.Contains(imgB.FilePath))
+                foreach (var result in group.SimilarityResults)
                 {
-                    continue;
+                    processedFiles.Add(result.ImagePath);
                 }
-
-                // We verify the descriptors are not empty when adding to the list
-                Debug.Assert(!imgA.Descriptors.Empty());
-                Debug.Assert(!imgB.Descriptors.Empty());
-
-                if (ImagesMatch(flannMatcher, imgA, imgB, maxFeatureDistance, minGoodMatchesThreshold)
-                    && ImagesMatch(bfMatcher, imgA, imgB, maxFeatureDistance, minGoodMatchesThreshold))
-                {
-                    similarGroup.Add(imgB.FilePath);
-                    processedFiles.Add(imgB.FilePath);
-                }
+                similarGroupsFiltered.Add(group);
             }
-
-            // Print the group if similarities were found
-            if (similarGroup.Any())
-            {
-                similarGroup.Add(imgA.FilePath);
-                similarGroups.Add(similarGroup);
-            }
-            processedFiles.Add(imgA.FilePath);
         }
 
-        foreach (var group in similarGroups)
+        foreach (var group in similarGroupsFiltered)
         {
             Console.WriteLine($"\n[Match Group Found]");
-            foreach (var file in group)
+            Console.WriteLine($" -> '{group.MainImagePath}'");
+            foreach (var result in group.SimilarityResults)
             {
-                Console.WriteLine($" -> {file}");
+                Console.WriteLine($" -> '{result.ImagePath}' (Flann: {result.GoodMatchesFlann}, BF: {result.GoodMatchesBf})");
             }
         }
 
