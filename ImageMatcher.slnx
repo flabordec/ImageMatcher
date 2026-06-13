@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ImageMatcherCli/ImageMatcherCli.csproj" />
+  <Project Path="ImageMatcherCommon/ImageMatcherCommon.csproj" />
+</Solution>

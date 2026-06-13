@@ -1,15 +1,15 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.CommandLine;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using NLog;
 using OpenCvSharp;
 using OpenCvSharp.Flann;
 
-namespace ImageSimilarityFinder;
+namespace MaguSoft.ImageMatcherCommon;
 
-record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
+public record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
 {
     public void Dispose()
     {
@@ -17,17 +17,18 @@ record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
     }
 }
 
-record SimilarityResult(string ImagePath, int GoodMatchesFlann, int GoodMatchesBf);
+public record SimilarityResult(string ImagePath, int GoodMatchesFlann, int GoodMatchesBf);
 
-record ImageGroup(string MainImagePath, List<SimilarityResult> SimilarityResults);
+public record ImageGroup(string MainImagePath, List<SimilarityResult> SimilarityResults);
 
-
-class Program
+public class ImageSimilarityFinder
 {
-    // Wrapper class to safely store and dispose of the Unmanaged OpenCV Mat objects
+    private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
+    public float MaxFeatureDistance { get; set; } = 25f;
+    public int MinGoodMatchesThreshold { get; set; } = 120;
 
-    private static ImageFeature? ExtractFeatures(string file, ORB orb)
+    private ImageFeature? ExtractFeatures(string file, ORB orb)
     {
         try
         {
@@ -35,7 +36,7 @@ class Program
             using var img = Cv2.ImRead(file, ImreadModes.Grayscale);
             if (img.Empty())
             {
-                Console.WriteLine($"[Warning] Failed to read image: '{file}'");
+                _logger.Warn("Failed to read image: {0}", file);
                 return null;
             }
 
@@ -50,40 +51,37 @@ class Program
             }
             else
             {
-                Console.WriteLine($"[Warning] No recognizable features found in image: '{file}'");
+                _logger.Warn("No recognizable features found in image: {0}", file);
                 return null;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Error] Failed to process '{file}': {ex.Message}");
+            _logger.Error(ex, "Failed to process {0}", file);
             return null;
         }
     }
 
-    private static int ImagesMatch(
+    private int ImagesMatch(
         DescriptorMatcher matcher,
         ImageFeature imgA,
-        ImageFeature imgB,
-        float maxFeatureDistance)
+        ImageFeature imgB)
     {
         // Match descriptors
         var matches = matcher.Match(imgA.Descriptors, imgB.Descriptors);
 
         // Filter for only high-quality matches (robust against lighting changes)
-        int goodMatchesCount = matches.Count(m => m.Distance < maxFeatureDistance);
+        int goodMatchesCount = matches.Count(m => m.Distance < MaxFeatureDistance);
 
         // If enough features match, they are similar (robust against cropping/resizing)
         return goodMatchesCount;
     }
 
-    private static ImageGroup FindSimilarImages(
+    private ImageGroup FindSimilarImages(
         FlannBasedMatcher flannMatcher,
         BFMatcher bfMatcher,
         List<ImageFeature> featuresList,
         int i,
-        float maxFeatureDistance,
-        int minGoodMatchesThreshold,
         ref int processedCount)
     {
         var imgA = featuresList[i];
@@ -97,28 +95,30 @@ class Program
             Debug.Assert(!imgA.Descriptors.Empty());
             Debug.Assert(!imgB.Descriptors.Empty());
 
-            int goodMatchesFlann = ImagesMatch(flannMatcher, imgA, imgB, maxFeatureDistance);
-            if (goodMatchesFlann >= minGoodMatchesThreshold)
+            int goodMatchesFlann = ImagesMatch(flannMatcher, imgA, imgB);
+            if (goodMatchesFlann >= MinGoodMatchesThreshold)
             {
-                int goodMatchesBf = ImagesMatch(bfMatcher, imgA, imgB, maxFeatureDistance);
-                if (goodMatchesBf >= minGoodMatchesThreshold)
+                int goodMatchesBf = ImagesMatch(bfMatcher, imgA, imgB);
+                if (goodMatchesBf >= MinGoodMatchesThreshold)
                 {
                     similarGroup.Add(new SimilarityResult(imgB.FilePath, goodMatchesFlann, goodMatchesBf));
                 }
             }
         }
 
-        Interlocked.Increment(ref processedCount);
-        Console.WriteLine($"\rProcessing image {processedCount + 1}/{featuresList.Count} ({(processedCount + 1) * 100 / featuresList.Count}%)");
+        int pc = Interlocked.Increment(ref processedCount);
+        _logger.Info(
+            "Processing image {0}/{1} ({2}%)",
+            pc,
+            featuresList.Count,
+            pc * 100 / featuresList.Count);
 
         return new ImageGroup(imgA.FilePath, similarGroup);
     }
 
-    private static async Task RunImageSearch(
+    public async Task<List<ImageGroup>> RunImageSearch(
         string targetDirectory,
-        bool recursive,
-        int minGoodMatchesThreshold,
-        float maxFeatureDistance)
+        bool recursive)
     {
         SearchOption searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 
@@ -137,7 +137,7 @@ class Program
         // Initialize ORB detector. We pull up to 1000 top features per image.
         using var orb = ORB.Create(nFeatures: 1000);
 
-        Console.WriteLine($"Indexing and extracting features from {files.Count} images...");
+        _logger.Info("Indexing and extracting features from {0} images...", files.Count);
 
         // 1. Extract Features from all images
         featuresList = (
@@ -147,7 +147,7 @@ class Program
             select features
             ).ToList();
 
-        Console.WriteLine("\nComparing images for similarities...");
+        _logger.Info("Comparing images for similarities...");
         // Brute Force Matcher using Hamming distance (best for ORB binary descriptors)
         using var bfMatcher = new BFMatcher(NormTypes.Hamming, crossCheck: true);
 
@@ -174,8 +174,6 @@ class Program
                         bfMatcher,
                         featuresList,
                         index,
-                        maxFeatureDistance,
-                        minGoodMatchesThreshold,
                         ref processedCount)));
         }
 
@@ -198,74 +196,15 @@ class Program
             }
         }
 
-        foreach (var group in similarGroupsFiltered)
-        {
-            Console.WriteLine($"\n[Match Group Found]");
-            Console.WriteLine($" -> '{group.MainImagePath}'");
-            foreach (var result in group.SimilarityResults)
-            {
-                Console.WriteLine($" -> '{result.ImagePath}' (Flann: {result.GoodMatchesFlann}, BF: {result.GoodMatchesBf})");
-            }
-        }
-
         // 3. Cleanup Unmanaged Resources
         foreach (var feature in featuresList)
         {
             feature.Dispose();
         }
 
-        Console.WriteLine("\nProcessing complete.");
-    }
+        _logger.Info("Processing complete.");
 
-    static async Task<int> Main(string[] args)
-    {
-        var directoryArgument = new Argument<string>("directory")
-        {
-            Description = "The directory to search.",
-        };
-
-        var recursiveOption = new Option<bool>("--recursive")
-        {
-            Description = "Whether the search is recursive or not.",
-            DefaultValueFactory = r => false,
-            Aliases = { "-r" }
-        };
-
-        var minKeypointMatchesOption = new Option<int>("--min-keypoint-matches")
-        {
-            Description = "The minimum number of keypoint matches to consider two images similar.",
-            DefaultValueFactory = r => 120
-        };
-
-        var maxFeatureDistanceOption = new Option<float>("--max-feature-distance")
-        {
-            Description = "Maximum distance (error) to consider two features a match.",
-            DefaultValueFactory = r => 25f
-        };
-
-        // 3. Assemble the Root Command
-        var rootCommand = new RootCommand("Image similarity search and keypoint matching tool.");
-        rootCommand.Arguments.Add(directoryArgument);
-        rootCommand.Options.Add(recursiveOption);
-        rootCommand.Options.Add(minKeypointMatchesOption);
-        rootCommand.Options.Add(maxFeatureDistanceOption);
-        rootCommand.SetAction(
-            pr => RunImageSearch(
-                pr.GetRequiredValue(directoryArgument),
-                pr.GetValue(recursiveOption),
-                pr.GetValue(minKeypointMatchesOption),
-                pr.GetValue(maxFeatureDistanceOption)));
-
-        try
-        {
-            return await rootCommand.Parse(args).InvokeAsync();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error: {ex.Message}");
-            return 1;
-        }
+        return similarGroupsFiltered;
     }
 }
-
 
