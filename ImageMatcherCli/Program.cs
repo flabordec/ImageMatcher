@@ -49,6 +49,12 @@ class Program
             Aliases = { "-r" }
         };
 
+        var numberOfFeaturesToExtractOption = new Option<int>("--number-of-features-to-extract")
+        {
+            Description = "The number of features to extract from each image.",
+            DefaultValueFactory = r => 1000
+        };
+
         var minKeypointMatchesOption = new Option<int>("--min-keypoint-matches")
         {
             Description = "The minimum number of keypoint matches to consider two images similar.",
@@ -74,10 +80,12 @@ class Program
         rootCommand.Options.Add(minKeypointMatchesOption);
         rootCommand.Options.Add(maxFeatureDistanceOption);
         rootCommand.Options.Add(matcherTypeOption);
+        rootCommand.Options.Add(numberOfFeaturesToExtractOption);
         rootCommand.SetAction(
             pr => RunImageSearch(
                 pr.GetRequiredValue(directoryArgument),
                 pr.GetValue(recursiveOption),
+                pr.GetValue(numberOfFeaturesToExtractOption),
                 pr.GetValue(minKeypointMatchesOption),
                 pr.GetValue(maxFeatureDistanceOption),
                 pr.GetValue(matcherTypeOption)));
@@ -96,6 +104,7 @@ class Program
     private static async Task RunImageSearch(
         string targetDirectory,
         bool recursive,
+        int numberOfFeaturesToExtract,
         int minGoodMatchesThreshold,
         float maxFeatureDistance,
         MatcherType matcherType)
@@ -104,7 +113,7 @@ class Program
         switch (matcherType)
         {
             case MatcherType.FlannBased:
-                matcherFactory = new FlannBasedImageMatcherFactory();
+                matcherFactory = new FastFlannBasedImageMatcherFactory();
                 break;
             case MatcherType.BruteForceHamming:
                 matcherFactory = new BruteForceHammingImageMatcherFactory();
@@ -116,7 +125,7 @@ class Program
                 throw new ArgumentException($"Invalid matcher type: {matcherType}.");
         }
 
-        var similarityFinder = new ImageSimilarityFinder(matcherFactory, maxFeatureDistance, minGoodMatchesThreshold);
+        var similarityFinder = new ImageSimilarityFinder(matcherFactory, numberOfFeaturesToExtract, maxFeatureDistance, minGoodMatchesThreshold);
 
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
 

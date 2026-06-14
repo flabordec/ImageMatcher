@@ -13,16 +13,22 @@ public class ImageSimilarityFinder
 {
     private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
+    public int NumberOfFeaturesToExtract { get; }
     public float MaxFeatureDistance { get; }
     public int MinGoodMatchesThreshold { get; }
 
     private readonly IImageMatcherFactory _matcherFactory;
 
-    public ImageSimilarityFinder(IImageMatcherFactory matcherFactory, float maxFeatureDistance, int minGoodMatchesThreshold)
+    public ImageSimilarityFinder(IImageMatcherFactory matcherFactory, int numberOfFeaturesToExtract, float maxFeatureDistance, int minGoodMatchesThreshold)
     {
         _matcherFactory = matcherFactory;
+        NumberOfFeaturesToExtract = numberOfFeaturesToExtract;
         MaxFeatureDistance = maxFeatureDistance;
         MinGoodMatchesThreshold = minGoodMatchesThreshold;
+        if (MinGoodMatchesThreshold > NumberOfFeaturesToExtract)
+        {
+            throw new ArgumentException("The number of matches cannot be greater than the number of features to extract.");
+        }
     }
 
     private ImageFeature? ExtractFeatures(string file, ORB orb)
@@ -60,17 +66,16 @@ public class ImageSimilarityFinder
     }
 
     private ImageGroup FindSimilarImages(
-        List<ImageFeature> featuresList,
-        int i,
+        Span<ImageFeature> featuresList,
         Stopwatch stopwatch,
         ref int processedCount)
     {
-        var imgA = featuresList[i];
+        var imgA = featuresList[0];
         var similarGroup = new List<SimilarityResult>();
 
         using var matcher = _matcherFactory.CreateMatcher(MaxFeatureDistance, MinGoodMatchesThreshold);
 
-        for (int j = i + 1; j < featuresList.Count; j++)
+        for (int j = 1; j < featuresList.Length; j++)
         {
             var imgB = featuresList[j];
 
@@ -84,14 +89,12 @@ public class ImageSimilarityFinder
             }
         }
 
-        int pc = Interlocked.Increment(ref processedCount);
+        int processedCountUpdated = Interlocked.Increment(ref processedCount);
         long milliseconds = stopwatch.ElapsedMilliseconds;
-        float throughput = pc / (milliseconds / 1000.0f);
+        float throughput = processedCountUpdated / (milliseconds / 1000.0f);
         _logger.Info(
-            "Processing image {0}/{1} ({2}%), throughput: {3:F2} images/sec",
-            pc,
-            featuresList.Count,
-            pc * 100 / featuresList.Count,
+            "Processing image {0}, throughput: {1:F2} images/sec",
+            processedCountUpdated,
             throughput);
 
         return new ImageGroup(imgA.FilePath, similarGroup);
@@ -101,6 +104,16 @@ public class ImageSimilarityFinder
         string targetDirectory,
         bool recursive)
     {
+        _logger.Info(
+            "Starting image search in {0}. " +
+            "Features to extract: {1}, max feature distance: {2}, min good matches: {3}. " +
+            "Algorithm to use: {4}",
+            targetDirectory,
+            NumberOfFeaturesToExtract,
+            MaxFeatureDistance,
+            MinGoodMatchesThreshold,
+            _matcherFactory.GetType().Name);
+
         SearchOption searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 
         if (!Directory.Exists(targetDirectory))
@@ -113,20 +126,17 @@ public class ImageSimilarityFinder
                              .Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
                              .ToList();
 
-        var featuresList = new List<ImageFeature>();
-
-        // Initialize ORB detector. We pull up to 1000 top features per image.
-        using var orb = ORB.Create(nFeatures: 1000);
+        using var orb = ORB.Create(nFeatures: NumberOfFeaturesToExtract);
 
         _logger.Info("Indexing and extracting features from {0} images...", files.Count);
 
         // 1. Extract Features from all images
-        featuresList = (
+        var featuresList = (
             from f in files.AsParallel()
             let features = ExtractFeatures(f, orb)
             where features != null
             select features
-            ).ToList();
+            ).ToArray();
 
         _logger.Info("Comparing images for similarities...");
 
@@ -134,16 +144,15 @@ public class ImageSimilarityFinder
         int processedCount = 0;
         // 2. Compare features (O(N^2) comparison)
         Stopwatch stopwatch = Stopwatch.StartNew();
-        for (int i = 0; i < featuresList.Count; i++)
+        for (int i = 0; i < featuresList.Length; i++)
         {
-            int index = i;
-            tasks.Add(
-                Task.Run(() =>
-                    FindSimilarImages(
-                        featuresList,
-                        index,
-                        stopwatch,
-                        ref processedCount)));
+            Memory<ImageFeature> memorySegment = featuresList.AsMemory(i);
+            var task = Task.Run(() =>
+            {
+                Span<ImageFeature> span = memorySegment.Span;
+                return FindSimilarImages(span, stopwatch, ref processedCount);
+            });
+            tasks.Add(task);
         }
 
         var similarGroupsComplete = await Task.WhenAll(tasks);

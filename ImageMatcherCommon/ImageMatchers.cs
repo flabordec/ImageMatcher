@@ -66,13 +66,14 @@ public class FlannBasedImageMatcher : ImageMatcherBase
     private readonly SearchParams _searchParams;
     private readonly FlannBasedMatcher _flannMatcher;
 
-    public FlannBasedImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold) : base(maxFeatureDistance, minGoodMatchesThreshold)
+    public FlannBasedImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold, int numberOfTables, int keySize, int multiProbeLevel)
+        : base(maxFeatureDistance, minGoodMatchesThreshold)
     {
         // Flann-based Matcher for efficient matching of ORB descriptors
         // - table_number: Number of hash tables to use
         // - key_size: Length of the key in bits -- kind of like zip code
-        // - multi_probe_level (2): Number of levels to probe for neighboring buckets
-        _indexParams = new LshIndexParams(6, 24, 1);
+        // - multi_probe_level: Number of levels to probe for neighboring buckets
+        _indexParams = new LshIndexParams(numberOfTables, keySize, multiProbeLevel);
         // - checks: How many times the tree(s) should be recursively traversed. 
         // Higher = more accurate matches, but slower.
         _searchParams = new SearchParams(50);
@@ -125,20 +126,22 @@ public class BruteForceHammingImageMatcher : ImageMatcherBase
 
 public class BothImageMatcher : ImageMatcherBase
 {
-    private readonly FlannBasedImageMatcher _flannMatcher;
-    private readonly BruteForceHammingImageMatcher _bfMatcher;
+    private readonly IImageMatcher _fastMatcher;
+    private readonly IImageMatcher _preciseMatcher;
 
     public BothImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold) : base(maxFeatureDistance, minGoodMatchesThreshold)
     {
-        _flannMatcher = new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
-        _bfMatcher = new BruteForceHammingImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
+        var flannFactory = new FastFlannBasedImageMatcherFactory();
+        _fastMatcher = flannFactory.CreateMatcher(maxFeatureDistance, minGoodMatchesThreshold);
+        var bruteForceFactory = new BruteForceHammingImageMatcherFactory();
+        _preciseMatcher = bruteForceFactory.CreateMatcher(maxFeatureDistance, minGoodMatchesThreshold);
     }
 
     public override bool ImagesMatch(ImageFeature imgA, ImageFeature imgB, out int goodMatchesCount)
     {
         return
-            _flannMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount) &&
-            _bfMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount);
+            _fastMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount) &&
+            _preciseMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount);
     }
 
     protected override void Dispose(bool disposing)
@@ -146,8 +149,8 @@ public class BothImageMatcher : ImageMatcherBase
         base.Dispose(disposing);
         if (disposing)
         {
-            _flannMatcher?.Dispose();
-            _bfMatcher?.Dispose();
+            _fastMatcher?.Dispose();
+            _preciseMatcher?.Dispose();
         }
     }
 }

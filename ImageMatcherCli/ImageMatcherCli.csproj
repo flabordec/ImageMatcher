@@ -19,4 +19,8 @@
     <ProjectReference Include="..\ImageMatcherCommon\ImageMatcherCommon.csproj" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
 </Project>

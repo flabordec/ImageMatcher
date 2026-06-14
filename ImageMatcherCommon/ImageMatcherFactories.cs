@@ -14,11 +14,18 @@ public interface IImageMatcherFactory
     public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold);
 }
 
-public class FlannBasedImageMatcherFactory : IImageMatcherFactory
+public class FastFlannBasedImageMatcherFactory : IImageMatcherFactory
 {
     public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
     {
-        return new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
+        return new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 6, 24, 1);
+    }
+}
+public class SlowFlannBasedImageMatcherFactory : IImageMatcherFactory
+{
+    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
+    {
+        return new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 12, 20, 2);
     }
 }
 
