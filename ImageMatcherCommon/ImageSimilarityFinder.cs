@@ -9,24 +9,21 @@ using OpenCvSharp.Flann;
 
 namespace MaguSoft.ImageMatcherCommon;
 
-public record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
-{
-    public void Dispose()
-    {
-        Descriptors?.Dispose();
-    }
-}
-
-public record SimilarityResult(string ImagePath, int GoodMatchesFlann, int GoodMatchesBf);
-
-public record ImageGroup(string MainImagePath, List<SimilarityResult> SimilarityResults);
-
 public class ImageSimilarityFinder
 {
     private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
-    public float MaxFeatureDistance { get; set; } = 25f;
-    public int MinGoodMatchesThreshold { get; set; } = 120;
+    public float MaxFeatureDistance { get; }
+    public int MinGoodMatchesThreshold { get; }
+
+    private readonly IImageMatcherFactory _matcherFactory;
+
+    public ImageSimilarityFinder(IImageMatcherFactory matcherFactory, float maxFeatureDistance, int minGoodMatchesThreshold)
+    {
+        _matcherFactory = matcherFactory;
+        MaxFeatureDistance = maxFeatureDistance;
+        MinGoodMatchesThreshold = minGoodMatchesThreshold;
+    }
 
     private ImageFeature? ExtractFeatures(string file, ORB orb)
     {
@@ -62,30 +59,16 @@ public class ImageSimilarityFinder
         }
     }
 
-    private int ImagesMatch(
-        DescriptorMatcher matcher,
-        ImageFeature imgA,
-        ImageFeature imgB)
-    {
-        // Match descriptors
-        var matches = matcher.Match(imgA.Descriptors, imgB.Descriptors);
-
-        // Filter for only high-quality matches (robust against lighting changes)
-        int goodMatchesCount = matches.Count(m => m.Distance < MaxFeatureDistance);
-
-        // If enough features match, they are similar (robust against cropping/resizing)
-        return goodMatchesCount;
-    }
-
     private ImageGroup FindSimilarImages(
-        FlannBasedMatcher flannMatcher,
-        BFMatcher bfMatcher,
         List<ImageFeature> featuresList,
         int i,
+        Stopwatch stopwatch,
         ref int processedCount)
     {
         var imgA = featuresList[i];
         var similarGroup = new List<SimilarityResult>();
+
+        using var matcher = _matcherFactory.CreateMatcher(MaxFeatureDistance, MinGoodMatchesThreshold);
 
         for (int j = i + 1; j < featuresList.Count; j++)
         {
@@ -95,23 +78,21 @@ public class ImageSimilarityFinder
             Debug.Assert(!imgA.Descriptors.Empty());
             Debug.Assert(!imgB.Descriptors.Empty());
 
-            int goodMatchesFlann = ImagesMatch(flannMatcher, imgA, imgB);
-            if (goodMatchesFlann >= MinGoodMatchesThreshold)
+            if (matcher.ImagesMatch(imgA, imgB, out int goodMatchesCount))
             {
-                int goodMatchesBf = ImagesMatch(bfMatcher, imgA, imgB);
-                if (goodMatchesBf >= MinGoodMatchesThreshold)
-                {
-                    similarGroup.Add(new SimilarityResult(imgB.FilePath, goodMatchesFlann, goodMatchesBf));
-                }
+                similarGroup.Add(new SimilarityResult(imgB.FilePath, goodMatchesCount));
             }
         }
 
         int pc = Interlocked.Increment(ref processedCount);
+        long milliseconds = stopwatch.ElapsedMilliseconds;
+        float throughput = pc / (milliseconds / 1000.0f);
         _logger.Info(
-            "Processing image {0}/{1} ({2}%)",
+            "Processing image {0}/{1} ({2}%), throughput: {3:F2} images/sec",
             pc,
             featuresList.Count,
-            pc * 100 / featuresList.Count);
+            pc * 100 / featuresList.Count,
+            throughput);
 
         return new ImageGroup(imgA.FilePath, similarGroup);
     }
@@ -148,32 +129,20 @@ public class ImageSimilarityFinder
             ).ToList();
 
         _logger.Info("Comparing images for similarities...");
-        // Brute Force Matcher using Hamming distance (best for ORB binary descriptors)
-        using var bfMatcher = new BFMatcher(NormTypes.Hamming, crossCheck: true);
-
-        // Flann-based Matcher for efficient matching of ORB descriptors
-        // - table_number: Number of hash tables to use
-        // - key_size: Length of the key in bits -- kind of like zip code
-        // - multi_probe_level (2): Number of levels to probe for neighboring buckets
-        using var indexParams = new LshIndexParams(6, 24, 1);
-        // - checks: How many times the tree(s) should be recursively traversed. 
-        // Higher = more accurate matches, but slower.
-        using var searchParams = new SearchParams(50);
-        using var flannMatcher = new FlannBasedMatcher(indexParams, searchParams);
 
         var tasks = new List<Task<ImageGroup>>();
         int processedCount = 0;
         // 2. Compare features (O(N^2) comparison)
+        Stopwatch stopwatch = Stopwatch.StartNew();
         for (int i = 0; i < featuresList.Count; i++)
         {
             int index = i;
             tasks.Add(
                 Task.Run(() =>
                     FindSimilarImages(
-                        flannMatcher,
-                        bfMatcher,
                         featuresList,
                         index,
+                        stopwatch,
                         ref processedCount)));
         }
 

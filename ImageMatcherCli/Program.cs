@@ -10,6 +10,12 @@ using MaguSoft.ImageMatcherCommon;
 
 namespace MaguSoft.ImageMatcherCli;
 
+enum MatcherType
+{
+    FlannBased,
+    BruteForceHamming,
+    Both,
+}
 
 class Program
 {
@@ -55,18 +61,26 @@ class Program
             DefaultValueFactory = r => 25f
         };
 
+        var matcherTypeOption = new Option<MatcherType>("--matcher-type")
+        {
+            Description = "The type of matcher to use. FlannBased is the fastest, BruteForceHamming is more accurate.",
+            DefaultValueFactory = r => MatcherType.Both
+        };
+
         // 3. Assemble the Root Command
         var rootCommand = new RootCommand("Image similarity search and keypoint matching tool.");
         rootCommand.Arguments.Add(directoryArgument);
         rootCommand.Options.Add(recursiveOption);
         rootCommand.Options.Add(minKeypointMatchesOption);
         rootCommand.Options.Add(maxFeatureDistanceOption);
+        rootCommand.Options.Add(matcherTypeOption);
         rootCommand.SetAction(
             pr => RunImageSearch(
                 pr.GetRequiredValue(directoryArgument),
                 pr.GetValue(recursiveOption),
                 pr.GetValue(minKeypointMatchesOption),
-                pr.GetValue(maxFeatureDistanceOption)));
+                pr.GetValue(maxFeatureDistanceOption),
+                pr.GetValue(matcherTypeOption)));
 
         try
         {
@@ -83,13 +97,26 @@ class Program
         string targetDirectory,
         bool recursive,
         int minGoodMatchesThreshold,
-        float maxFeatureDistance)
+        float maxFeatureDistance,
+        MatcherType matcherType)
     {
-        var similarityFinder = new ImageSimilarityFinder
+        IImageMatcherFactory matcherFactory;
+        switch (matcherType)
         {
-            MinGoodMatchesThreshold = minGoodMatchesThreshold,
-            MaxFeatureDistance = maxFeatureDistance
-        };
+            case MatcherType.FlannBased:
+                matcherFactory = new FlannBasedImageMatcherFactory();
+                break;
+            case MatcherType.BruteForceHamming:
+                matcherFactory = new BruteForceHammingImageMatcherFactory();
+                break;
+            case MatcherType.Both:
+                matcherFactory = new BothImageMatcherFactory();
+                break;
+            default:
+                throw new ArgumentException($"Invalid matcher type: {matcherType}.");
+        }
+
+        var similarityFinder = new ImageSimilarityFinder(matcherFactory, maxFeatureDistance, minGoodMatchesThreshold);
 
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
 
@@ -99,7 +126,7 @@ class Program
             Console.WriteLine($" -> '{group.MainImagePath}'");
             foreach (var result in group.SimilarityResults)
             {
-                Console.WriteLine($" -> '{result.ImagePath}' (Flann: {result.GoodMatchesFlann}, BF: {result.GoodMatchesBf})");
+                Console.WriteLine($" -> '{result.ImagePath}' (good matches: {result.GoodMatchesCount})");
             }
         }
         Console.WriteLine("Search complete");
