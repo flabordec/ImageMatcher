@@ -3,7 +3,6 @@ public enum MatcherType
 {
     FlannBased,
     BruteForceHamming,
-    Both,
 }
 public record FeaturesMatchingSettings(MatcherType MatcherType, int NumberOfFeaturesToExtract, double MaxFeatureDistance, int MinGoodMatchesThreshold);
 public record HashMatchingSettings(int SimilarityThreshold);

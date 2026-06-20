@@ -123,34 +123,3 @@ public class BruteForceHammingImageMatcher : ImageMatcherBase
         }
     }
 }
-
-public class BothImageMatcher : ImageMatcherBase
-{
-    private readonly IImageMatcher _fastMatcher;
-    private readonly IImageMatcher _preciseMatcher;
-
-    public BothImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold) : base(maxFeatureDistance, minGoodMatchesThreshold)
-    {
-        var flannFactory = new FastFlannBasedImageMatcherFactory();
-        _fastMatcher = flannFactory.CreateMatcher(maxFeatureDistance, minGoodMatchesThreshold);
-        var bruteForceFactory = new BruteForceHammingImageMatcherFactory();
-        _preciseMatcher = bruteForceFactory.CreateMatcher(maxFeatureDistance, minGoodMatchesThreshold);
-    }
-
-    public override bool ImagesMatch(ImageFeature imgA, ImageFeature imgB, out int goodMatchesCount)
-    {
-        return
-            _fastMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount) &&
-            _preciseMatcher.ImagesMatch(imgA, imgB, out goodMatchesCount);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        base.Dispose(disposing);
-        if (disposing)
-        {
-            _fastMatcher?.Dispose();
-            _preciseMatcher?.Dispose();
-        }
-    }
-}
