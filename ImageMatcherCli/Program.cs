@@ -63,7 +63,7 @@ class Program
         var matcherTypeOption = new Option<MatcherType>("--matcher-type")
         {
             Description = "The type of matcher to use. FlannBased is the fastest, BruteForceHamming is more accurate.",
-            DefaultValueFactory = r => MatcherType.Both
+            DefaultValueFactory = r => MatcherType.BruteForceHamming
         };
 
         var similarityThresholdOption = new Option<int>("--similarity-threshold")
@@ -119,7 +119,9 @@ class Program
         );
         var similarityFinder = new ImageSimilarityFinder(settings);
 
+        Stopwatch stopwatch = Stopwatch.StartNew();
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
+        stopwatch.Stop();
 
         foreach (var group in similarGroupsFiltered)
         {
@@ -131,6 +133,7 @@ class Program
             }
         }
         Console.WriteLine("Search complete");
+        Console.WriteLine($"Search time: {stopwatch.ElapsedMilliseconds} ms");
     }
 }
 
