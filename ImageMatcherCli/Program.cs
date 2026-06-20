@@ -7,6 +7,7 @@ using System.Linq;
 using OpenCvSharp;
 using OpenCvSharp.Flann;
 using MaguSoft.ImageMatcherCommon;
+using System.Text.Json;
 
 namespace MaguSoft.ImageMatcherCli;
 
@@ -72,6 +73,11 @@ class Program
             DefaultValueFactory = r => 22
         };
 
+        var outputFilePathOption = new Option<string>("--output")
+        {
+            Description = "The file path to ouptut the results to.",
+        };
+
         // 3. Assemble the Root Command
         var rootCommand = new RootCommand("Image similarity search and keypoint matching tool.");
         rootCommand.Arguments.Add(directoryArgument);
@@ -81,9 +87,11 @@ class Program
         rootCommand.Options.Add(matcherTypeOption);
         rootCommand.Options.Add(numberOfFeaturesToExtractOption);
         rootCommand.Options.Add(similarityThresholdOption);
+        rootCommand.Options.Add(outputFilePathOption);
         rootCommand.SetAction(
             pr => RunImageSearch(
                 pr.GetRequiredValue(directoryArgument),
+                pr.GetValue(outputFilePathOption),
                 pr.GetValue(recursiveOption),
                 pr.GetValue(numberOfFeaturesToExtractOption),
                 pr.GetValue(minKeypointMatchesOption),
@@ -106,6 +114,7 @@ class Program
 
     private static async Task RunImageSearch(
         string targetDirectory,
+        string? outputFilePath,
         bool recursive,
         int numberOfFeaturesToExtract,
         int minGoodMatchesThreshold,
@@ -123,17 +132,25 @@ class Program
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
         stopwatch.Stop();
 
-        foreach (var group in similarGroupsFiltered)
+        if (outputFilePath is null)
         {
-            Console.WriteLine($"\n[Match Group Found]");
-            Console.WriteLine($" -> '{group.MainImagePath}'");
-            foreach (var result in group.SimilarityResults)
+            foreach (var group in similarGroupsFiltered)
             {
-                Console.WriteLine($" -> {result.DisplayText}");
+                Console.WriteLine($"\n[Match Group Found]");
+                Console.WriteLine($" -> '{group.MainImagePath}'");
+                foreach (var result in group.SimilarityResults)
+                {
+                    Console.WriteLine($" -> {result.DisplayText}");
+                }
             }
         }
-        Console.WriteLine("Search complete");
-        Console.WriteLine($"Search time: {stopwatch.ElapsedMilliseconds} ms");
+        else
+        {
+            using var file = File.Create(outputFilePath);
+            JsonSerializer.Serialize(file, similarGroupsFiltered, ListOfImageGroupsJsonContext.Default.ListImageGroup);
+            Console.WriteLine($"Results saved to: {outputFilePath}");
+        }
+        Console.WriteLine($"Search complete in: {stopwatch.ElapsedMilliseconds} ms");
     }
 }
 
