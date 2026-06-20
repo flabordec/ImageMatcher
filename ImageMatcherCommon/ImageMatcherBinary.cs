@@ -13,9 +13,8 @@ public class ImagesMatcherBinary : IImagesMatcher
     {
     }
 
-    private async Task<List<ImageGroup>> FindSimilarImagesByHashAsync(IEnumerable<string> files)
+    private async Task<List<ImageGroup>> FindSimilarImagesByHashAsync(List<string> files)
     {
-
         var imageHashes = new ConcurrentBag<(string Path, Hash Hash)>();
         int processedCount = 0;
 
@@ -49,6 +48,6 @@ public class ImagesMatcherBinary : IImagesMatcher
         return imageGroups;
     }
 
-    public Task<List<ImageGroup>> FindSimilarImagesAsync(IEnumerable<string> files)
+    public Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files)
         => FindSimilarImagesByHashAsync(files);
 }

@@ -39,14 +39,6 @@ public class BruteForceHammingImageMatcherFactory : IImageMatcherFactory
     }
 }
 
-public class BothImageMatcherFactory : IImageMatcherFactory
-{
-    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
-    {
-        return new BothImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
-    }
-}
-
 
 public interface IImagesMatcher
 {
@@ -69,7 +61,6 @@ public class ImagesMatcherFeatures : IImagesMatcher
         {
             MatcherType.FlannBased => new FastFlannBasedImageMatcherFactory(),
             MatcherType.BruteForceHamming => new BruteForceHammingImageMatcherFactory(),
-            MatcherType.Both => new BothImageMatcherFactory(),
             _ => throw new ArgumentOutOfRangeException(nameof(settings.MatcherType), settings.MatcherType, null)
         };
         NumberOfFeaturesToExtract = settings.NumberOfFeaturesToExtract;
