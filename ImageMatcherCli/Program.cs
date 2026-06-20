@@ -10,13 +10,6 @@ using MaguSoft.ImageMatcherCommon;
 
 namespace MaguSoft.ImageMatcherCli;
 
-enum MatcherType
-{
-    FlannBased,
-    BruteForceHamming,
-    Both,
-}
-
 class Program
 {
     // Wrapper class to safely store and dispose of the Unmanaged OpenCV Mat objects
@@ -73,6 +66,12 @@ class Program
             DefaultValueFactory = r => MatcherType.Both
         };
 
+        var similarityThresholdOption = new Option<int>("--similarity-threshold")
+        {
+            Description = "The minimum similarity threshold for the fast first pass to consider two images similar, 15-22 are good values. Lower values will be faster but might miss images.",
+            DefaultValueFactory = r => 22
+        };
+
         // 3. Assemble the Root Command
         var rootCommand = new RootCommand("Image similarity search and keypoint matching tool.");
         rootCommand.Arguments.Add(directoryArgument);
@@ -81,6 +80,7 @@ class Program
         rootCommand.Options.Add(maxFeatureDistanceOption);
         rootCommand.Options.Add(matcherTypeOption);
         rootCommand.Options.Add(numberOfFeaturesToExtractOption);
+        rootCommand.Options.Add(similarityThresholdOption);
         rootCommand.SetAction(
             pr => RunImageSearch(
                 pr.GetRequiredValue(directoryArgument),
@@ -88,7 +88,10 @@ class Program
                 pr.GetValue(numberOfFeaturesToExtractOption),
                 pr.GetValue(minKeypointMatchesOption),
                 pr.GetValue(maxFeatureDistanceOption),
-                pr.GetValue(matcherTypeOption)));
+                pr.GetValue(matcherTypeOption),
+                pr.GetValue(similarityThresholdOption)
+            )
+        );
 
         try
         {
@@ -107,25 +110,14 @@ class Program
         int numberOfFeaturesToExtract,
         int minGoodMatchesThreshold,
         float maxFeatureDistance,
-        MatcherType matcherType)
+        MatcherType matcherType,
+        int similarityThreshold)
     {
-        IImageMatcherFactory matcherFactory;
-        switch (matcherType)
-        {
-            case MatcherType.FlannBased:
-                matcherFactory = new FastFlannBasedImageMatcherFactory();
-                break;
-            case MatcherType.BruteForceHamming:
-                matcherFactory = new BruteForceHammingImageMatcherFactory();
-                break;
-            case MatcherType.Both:
-                matcherFactory = new BothImageMatcherFactory();
-                break;
-            default:
-                throw new ArgumentException($"Invalid matcher type: {matcherType}.");
-        }
-
-        var similarityFinder = new ImageSimilarityFinder(matcherFactory, numberOfFeaturesToExtract, maxFeatureDistance, minGoodMatchesThreshold);
+        var settings = new ImageMatchingSettings(
+            new FeaturesMatchingSettings(matcherType, numberOfFeaturesToExtract, maxFeatureDistance, minGoodMatchesThreshold),
+            new HashMatchingSettings(similarityThreshold)
+        );
+        var similarityFinder = new ImageSimilarityFinder(settings);
 
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
 
@@ -135,7 +127,7 @@ class Program
             Console.WriteLine($" -> '{group.MainImagePath}'");
             foreach (var result in group.SimilarityResults)
             {
-                Console.WriteLine($" -> '{result.ImagePath}' (good matches: {result.GoodMatchesCount})");
+                Console.WriteLine($" -> {result.DisplayText}");
             }
         }
         Console.WriteLine("Search complete");

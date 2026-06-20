@@ -17,6 +17,17 @@ public record ImageFeature(string FilePath, Mat Descriptors) : IDisposable
     }
 }
 
-public record SimilarityResult(string ImagePath, int GoodMatchesCount);
+public abstract record SimilarityResult(string ImagePath)
+{
+    public abstract string DisplayText { get; }
+}
+public record FeaturesSimilarityResult(string ImagePath, int GoodMatchesCount) : SimilarityResult(ImagePath)
+{
+    public override string DisplayText => $"Image: {ImagePath}, Good Matches: {GoodMatchesCount}";
+}
+public record HashSimilarityResult(string ImagePath, int Distance) : SimilarityResult(ImagePath)
+{
+    public override string DisplayText => $"Image: {ImagePath}, Distance: {Distance}";
+}
 
 public record ImageGroup(string MainImagePath, List<SimilarityResult> SimilarityResults);
