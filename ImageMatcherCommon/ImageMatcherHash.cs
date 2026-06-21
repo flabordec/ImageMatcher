@@ -54,13 +54,21 @@ public class ImagesMatcherHash : IImagesMatcher
         {
             // Decode the image directly into memory
             using var original = SKBitmap.Decode(filePath);
-            if (original == null) return null;
+            if (original == null)
+            {
+                _logger.Warn($"Failed to decode image: {filePath}");
+                return null;
+            }
 
             // Resize to 9x8. Nearest-neighbor routing, is extremely fast
             // and perfect for perceptual hashing.
             var info = new SKImageInfo(9, 8);
             using var resized = original.Resize(info, new SKSamplingOptions(SKFilterMode.Nearest));
-            if (resized == null) return null;
+            if (resized == null)
+            {
+                _logger.Warn($"Failed to resize image: {filePath}");
+                return null;
+            }
 
             ulong hash = 0;
             int bitIndex = 0;
@@ -87,9 +95,9 @@ public class ImagesMatcherHash : IImagesMatcher
             }
             return hash;
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore files that are locked, corrupt, or unsupported
+            _logger.Error(ex, "Failed to process image: {0}", filePath);
             return null;
         }
     }
@@ -104,14 +112,20 @@ public class ImagesMatcherHash : IImagesMatcher
 
         for (int i = 0; i < hashes.Count; i++)
         {
-            if (visited.Contains(i)) continue;
+            if (visited.Contains(i))
+            {
+                continue;
+            }
 
             var currentCluster = new List<SimilarityResult>();
             visited.Add(i);
 
             for (int j = i + 1; j < hashes.Count; j++)
             {
-                if (visited.Contains(j)) continue;
+                if (visited.Contains(j))
+                {
+                    continue;
+                }
 
                 // BitOperations.PopCount translates to a native hardware instruction (POPCNT)
                 // making this comparison almost instantaneous.

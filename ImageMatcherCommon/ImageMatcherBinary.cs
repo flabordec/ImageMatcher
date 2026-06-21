@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using NLog;
 using Blake3;
+using System.Collections.Immutable;
 
 namespace MaguSoft.ImageMatcherCommon;
 
@@ -18,22 +19,25 @@ public class ImagesMatcherBinary : IImagesMatcher
         var imageHashes = new ConcurrentBag<(string Path, Hash Hash)>();
         int processedCount = 0;
 
-        Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
-        {
-            byte[] data = File.ReadAllBytes(file);
-            var hash = Hasher.Hash(data);
-            imageHashes.Add((file, hash));
-
-            int currentCount = Interlocked.Increment(ref processedCount);
-            if (currentCount % 100 == 0)
+        Parallel.ForEach(
+            files,
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+            file =>
             {
-                _logger.Info($"Processed {currentCount} images...");
-            }
-        });
+                byte[] data = File.ReadAllBytes(file);
+                var hash = Hasher.Hash(data);
+                imageHashes.Add((file, hash));
 
-        Dictionary<Hash, List<string>> hashGroups = imageHashes
+                int currentCount = Interlocked.Increment(ref processedCount);
+                if (currentCount % 100 == 0)
+                {
+                    _logger.Info($"Processed {currentCount} images...");
+                }
+            });
+
+        ImmutableDictionary<Hash, List<string>> hashGroups = imageHashes
             .GroupBy(x => x.Hash)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Path).ToList());
+            .ToImmutableDictionary(g => g.Key, g => g.Select(x => x.Path).ToList());
 
         List<ImageGroup> imageGroups = new();
         foreach (var group in hashGroups)
