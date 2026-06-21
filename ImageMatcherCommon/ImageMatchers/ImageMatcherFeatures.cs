@@ -9,41 +9,7 @@ using NLog;
 using OpenCvSharp;
 using OpenCvSharp.Flann;
 
-namespace MaguSoft.ImageMatcherCommon;
-
-public interface IImageMatcherFactory
-{
-    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold);
-}
-
-public class FastFlannBasedImageMatcherFactory : IImageMatcherFactory
-{
-    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
-    {
-        return new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 6, 24, 1);
-    }
-}
-public class SlowFlannBasedImageMatcherFactory : IImageMatcherFactory
-{
-    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
-    {
-        return new FlannBasedImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 12, 20, 2);
-    }
-}
-
-public class BruteForceHammingImageMatcherFactory : IImageMatcherFactory
-{
-    public IImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
-    {
-        return new BruteForceHammingImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
-    }
-}
-
-
-public interface IImagesMatcher
-{
-    Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files);
-}
+namespace MaguSoft.ImageMatcherCommon.ImageMatchers;
 
 public class ImagesMatcherFeatures : IImagesMatcher
 {
@@ -53,14 +19,14 @@ public class ImagesMatcherFeatures : IImagesMatcher
     public float MaxFeatureDistance { get; }
     public int MinGoodMatchesThreshold { get; }
 
-    private readonly IImageMatcherFactory _matcherFactory;
+    private readonly IFeaturesImageMatcherFactory _matcherFactory;
 
     public ImagesMatcherFeatures(FeaturesMatchingSettings settings)
     {
         _matcherFactory = settings.MatcherType switch
         {
-            MatcherType.FlannBased => new FastFlannBasedImageMatcherFactory(),
-            MatcherType.BruteForceHamming => new BruteForceHammingImageMatcherFactory(),
+            MatcherType.FlannBased => new FastFlannBasedFeaturesImageMatcherFactory(),
+            MatcherType.BruteForceHamming => new BruteForceHammingFeaturesImageMatcherFactory(),
             _ => throw new ArgumentOutOfRangeException(nameof(settings.MatcherType), settings.MatcherType, null)
         };
         NumberOfFeaturesToExtract = settings.NumberOfFeaturesToExtract;
@@ -71,12 +37,17 @@ public class ImagesMatcherFeatures : IImagesMatcher
         {
             throw new ArgumentException("The number of matches cannot be greater than the number of features to extract.");
         }
+
+        _logger.Info(
+            "Features to extract: {0}, max feature distance: {1}, min good matches: {2}. " +
+            "Algorithm to use: {3}",
+            NumberOfFeaturesToExtract,
+            MaxFeatureDistance,
+            MinGoodMatchesThreshold,
+            _matcherFactory.GetType().Name);
     }
 
-    private ImageGroup FindSimilarImages(
-        Span<ImageFeature> featuresList,
-        Stopwatch stopwatch,
-        ref int processedCount)
+    private ImageGroup FindSimilarImages(Span<ImageFeature> featuresList, IProgress<ProgressEvent> progress)
     {
         var imgA = featuresList[0];
         var similarGroup = new List<SimilarityResult>();
@@ -97,14 +68,7 @@ public class ImagesMatcherFeatures : IImagesMatcher
             }
         }
 
-        int processedCountUpdated = Interlocked.Increment(ref processedCount);
-        long milliseconds = stopwatch.ElapsedMilliseconds;
-        float throughput = processedCountUpdated / (milliseconds / 1000.0f);
-        _logger.Info(
-            "Processing image {0}, throughput: {1:F2} images/sec",
-            processedCountUpdated,
-            throughput);
-
+        progress?.Report(new ImageProcessed("Processing image"));
         return new ImageGroup(imgA.FilePath, similarGroup);
     }
 
@@ -142,19 +106,9 @@ public class ImagesMatcherFeatures : IImagesMatcher
         }
     }
 
-    private async Task<List<ImageGroup>> FindSimilarImagesByFeaturesAsync(List<string> files)
+    private async Task<List<ImageGroup>> FindSimilarImagesByFeaturesAsync(List<string> files, IProgress<ProgressEvent> progress)
     {
-        _logger.Info(
-            "Features to extract: {0}, max feature distance: {1}, min good matches: {2}. " +
-            "Algorithm to use: {3}",
-            NumberOfFeaturesToExtract,
-            MaxFeatureDistance,
-            MinGoodMatchesThreshold,
-            _matcherFactory.GetType().Name);
-
         using var orb = ORB.Create(nFeatures: NumberOfFeaturesToExtract);
-
-        _logger.Info("Indexing and extracting features from {0} images...", files.Count);
 
         // 1. Extract Features from all images
         var featuresList = (
@@ -164,19 +118,15 @@ public class ImagesMatcherFeatures : IImagesMatcher
             select features
             ).ToArray();
 
-        _logger.Info("Comparing images for similarities...");
-
         var tasks = new List<Task<ImageGroup>>();
-        int processedCount = 0;
         // 2. Compare features (O(N^2) comparison)
-        Stopwatch stopwatch = Stopwatch.StartNew();
         for (int i = 0; i < featuresList.Length; i++)
         {
             Memory<ImageFeature> memorySegment = featuresList.AsMemory(i);
             var task = Task.Run(() =>
             {
                 Span<ImageFeature> span = memorySegment.Span;
-                return FindSimilarImages(span, stopwatch, ref processedCount);
+                return FindSimilarImages(span, progress);
             });
             tasks.Add(task);
         }
@@ -208,6 +158,6 @@ public class ImagesMatcherFeatures : IImagesMatcher
         return similarGroupsFiltered;
     }
 
-    public Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files)
-        => FindSimilarImagesByFeaturesAsync(files);
+    public Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files, IProgress<ProgressEvent> progress)
+        => FindSimilarImagesByFeaturesAsync(files, progress);
 }

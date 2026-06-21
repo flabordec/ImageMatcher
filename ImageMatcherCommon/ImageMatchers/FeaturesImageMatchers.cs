@@ -7,21 +7,21 @@ using NLog;
 using OpenCvSharp;
 using OpenCvSharp.Flann;
 
-namespace MaguSoft.ImageMatcherCommon;
+namespace MaguSoft.ImageMatcherCommon.ImageMatchers;
 
-public interface IImageMatcher : IDisposable
+public interface IFeaturesImageMatcher : IDisposable
 {
     public bool ImagesMatch(ImageFeature imgA, ImageFeature imgB, out int goodMatchesCount);
 }
 
-public abstract class ImageMatcherBase : IImageMatcher
+public abstract class FeaturesImageMatcherBase : IFeaturesImageMatcher
 {
     public float MaxFeatureDistance { get; }
     public int MinGoodMatchesThreshold { get; }
 
     private bool _disposed;
 
-    public ImageMatcherBase(float maxFeatureDistance, int minGoodMatchesThreshold)
+    public FeaturesImageMatcherBase(float maxFeatureDistance, int minGoodMatchesThreshold)
     {
         MaxFeatureDistance = maxFeatureDistance;
         MinGoodMatchesThreshold = minGoodMatchesThreshold;
@@ -60,13 +60,13 @@ public abstract class ImageMatcherBase : IImageMatcher
     }
 }
 
-public class FlannBasedImageMatcher : ImageMatcherBase
+public class FlannBasedFeaturesImageMatcher : FeaturesImageMatcherBase
 {
     private readonly LshIndexParams _indexParams;
     private readonly SearchParams _searchParams;
     private readonly FlannBasedMatcher _flannMatcher;
 
-    public FlannBasedImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold, int numberOfTables, int keySize, int multiProbeLevel)
+    public FlannBasedFeaturesImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold, int numberOfTables, int keySize, int multiProbeLevel)
         : base(maxFeatureDistance, minGoodMatchesThreshold)
     {
         // Flann-based Matcher for efficient matching of ORB descriptors
@@ -98,11 +98,11 @@ public class FlannBasedImageMatcher : ImageMatcherBase
     }
 }
 
-public class BruteForceHammingImageMatcher : ImageMatcherBase
+public class BruteForceHammingFeaturesImageMatcher : FeaturesImageMatcherBase
 {
     private readonly BFMatcher _bfMatcher;
 
-    public BruteForceHammingImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold) : base(maxFeatureDistance, minGoodMatchesThreshold)
+    public BruteForceHammingFeaturesImageMatcher(float maxFeatureDistance, int minGoodMatchesThreshold) : base(maxFeatureDistance, minGoodMatchesThreshold)
     {
         // Brute Force Matcher using Hamming distance (best for ORB binary descriptors)
         _bfMatcher = new BFMatcher(NormTypes.Hamming, crossCheck: true);
@@ -121,5 +121,33 @@ public class BruteForceHammingImageMatcher : ImageMatcherBase
         {
             _bfMatcher?.Dispose();
         }
+    }
+}
+
+public interface IFeaturesImageMatcherFactory
+{
+    public IFeaturesImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold);
+}
+
+public class FastFlannBasedFeaturesImageMatcherFactory : IFeaturesImageMatcherFactory
+{
+    public IFeaturesImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
+    {
+        return new FlannBasedFeaturesImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 6, 24, 1);
+    }
+}
+public class SlowFlannBasedFeaturesImageMatcherFactory : IFeaturesImageMatcherFactory
+{
+    public IFeaturesImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
+    {
+        return new FlannBasedFeaturesImageMatcher(maxFeatureDistance, minGoodMatchesThreshold, 12, 20, 2);
+    }
+}
+
+public class BruteForceHammingFeaturesImageMatcherFactory : IFeaturesImageMatcherFactory
+{
+    public IFeaturesImageMatcher CreateMatcher(float maxFeatureDistance, int minGoodMatchesThreshold)
+    {
+        return new BruteForceHammingFeaturesImageMatcher(maxFeatureDistance, minGoodMatchesThreshold);
     }
 }

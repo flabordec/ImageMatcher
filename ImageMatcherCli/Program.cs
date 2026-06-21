@@ -127,11 +127,7 @@ class Program
             new HashMatchingSettings(similarityThreshold)
         );
         var similarityFinder = new ImageSimilarityFinder(settings);
-
-        Stopwatch stopwatch = Stopwatch.StartNew();
         var similarGroupsFiltered = await similarityFinder.RunImageSearch(targetDirectory, recursive);
-        stopwatch.Stop();
-
         if (outputFilePath is null)
         {
             foreach (var group in similarGroupsFiltered)
@@ -150,7 +146,6 @@ class Program
             JsonSerializer.Serialize(file, similarGroupsFiltered, ListOfImageGroupsJsonContext.Default.ListImageGroup);
             Console.WriteLine($"Results saved to: {outputFilePath}");
         }
-        Console.WriteLine($"Search complete in: {stopwatch.ElapsedMilliseconds} ms");
     }
 }
 

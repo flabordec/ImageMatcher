@@ -3,7 +3,7 @@ using System.Numerics;
 using NLog;
 using SkiaSharp;
 
-namespace MaguSoft.ImageMatcherCommon;
+namespace MaguSoft.ImageMatcherCommon.ImageMatchers;
 
 public class ImagesMatcherHash : IImagesMatcher
 {
@@ -16,13 +16,12 @@ public class ImagesMatcherHash : IImagesMatcher
         _similarityThreshold = settings.SimilarityThreshold;
     }
 
-    private async Task<List<ImageGroup>> FindSimilarImagesByHashAsync(List<string> files)
+    private async Task<List<ImageGroup>> FindSimilarImagesByHashAsync(List<string> files, IProgress<ProgressEvent> progress)
     {
         _logger.Info("Similarity threshold: {0}", _similarityThreshold);
 
 
         var imageHashes = new ConcurrentBag<(string Path, ulong Hash)>();
-        int processedCount = 0;
 
         Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
         {
@@ -32,15 +31,10 @@ public class ImagesMatcherHash : IImagesMatcher
                 imageHashes.Add((file, hash.Value));
             }
 
-            int currentCount = Interlocked.Increment(ref processedCount);
-            if (currentCount % 100 == 0)
-            {
-                _logger.Info($"Processed {currentCount} / {files.Count} images...");
-            }
+            progress?.Report(new HashCalcualted(file));
         });
 
         var hashList = imageHashes.ToList();
-        _logger.Info($"\nSuccessfully hashed {hashList.Count} images. Grouping similarities...");
 
         return GroupSimilarImages(hashList);
     }
@@ -148,6 +142,6 @@ public class ImagesMatcherHash : IImagesMatcher
         return clusters;
     }
 
-    public Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files)
-        => FindSimilarImagesByHashAsync(files);
+    public Task<List<ImageGroup>> FindSimilarImagesAsync(List<string> files, IProgress<ProgressEvent> progress)
+        => FindSimilarImagesByHashAsync(files, progress);
 }
